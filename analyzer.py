@@ -2,7 +2,7 @@ import re
 import json
 from datetime import datetime, timedelta
 from openai import OpenAI
-from serpapi.google_search import GoogleSearch
+from serpapi import GoogleSearch
 import os
 import requests
 
