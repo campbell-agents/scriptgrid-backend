@@ -2,7 +2,6 @@ import re
 import json
 from datetime import datetime, timedelta
 from openai import OpenAI
-from serpapi import GoogleSearch
 import os
 import requests
 
@@ -199,10 +198,15 @@ def fetch_articles(query):
         "num": ARTICLES_PER_QUERY,
         "api_key": SERPAPI_KEY
     }
-    data = GoogleSearch(params).get_dict()
+    try:
+        response = requests.get("https://serpapi.com/search.json", params=params)
+        data = response.json()
 
-    print("\n=== RAW SERPAPI DATA ===")
-    print(json.dumps(data, indent=2))
+        print("\n=== RAW SERPAPI DATA ===")
+        print(json.dumps(data, indent=2))
+    except Exception as e:
+        print(f"Error fetching from SerpAPI: {e}")
+        return []
 
     results = []
     for section in ["organic_results", "news_results", "top_stories"]:
