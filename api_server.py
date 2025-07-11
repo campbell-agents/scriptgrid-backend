@@ -3,7 +3,7 @@ import json
 import traceback
 from flask import Flask, request, jsonify
 from flask_cors import CORS
-from analyzer.analyzer import (
+from analyzer import (
     analyze_script,
     simplify_queries,
     batch_score_relevance,
