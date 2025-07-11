@@ -128,4 +128,4 @@ def process_script():
     return analyze_script_endpoint()
 
 if __name__ == "__main__":
-    app.run(debug=True, port=5050)
+    app.run(host="0.0.0.0", port=10000, debug=True)
