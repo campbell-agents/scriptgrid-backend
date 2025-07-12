@@ -8,7 +8,7 @@ import requests
 client = OpenAI()
 
 RELEVANCY_MODEL = "gpt-4"  # Unified for better consistency
-ARTICLES_PER_QUERY = 20
+ARTICLES_PER_QUERY =8
 NEWSAPI_DAYS_BACK = 30
 
 # ✅ Fixed: Correct environment variable lookup
@@ -32,7 +32,7 @@ Script:
 \"\"\"
 """
     response = client.chat.completions.create(
-        model="gpt-4",
+        model="gpt-3.5-turbo",
         messages=[
             {"role": "system", "content": "You help extract structured information from text."},
             {"role": "user", "content": prompt}
