@@ -18,13 +18,16 @@ NEWSAPI_KEY = os.getenv("NEWSAPI_KEY")
 def analyze_script(script_text):
     prompt = f"""
 You are an intelligent text analysis agent.
-Read the script below and produce a JSON object with these fields:
+Read the script below and return a JSON object with:
 
-- "main_topics": 3–5 sentences summarizing the main ideas.
-- "keywords": 5–10 important keywords or named entities.
-- "queries": 3 search queries a journalist could use to find more information.
+- "main_topics": A 3–5 sentence summary of the script’s main ideas.
+- "keywords": 5–10 of the most important names, places, and concepts.
+- "queries": 4-8 very specific search queries a journalist might use to investigate this **exact case**, not just the general topic. Include names, dates, and locations if possible.
 
-Return ONLY the JSON object, no explanation or extra text.
+Avoid generic phrasing like "unidentified victims" or "forensic techniques". Be concrete.
+
+Return ONLY the JSON object. No extra text.
+
 
 Script:
 \"\"\"
