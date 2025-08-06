@@ -371,7 +371,12 @@ def deduplicate_articles(articles):
     unique = []
     for article in articles:
         url = article.get("url", "").strip().lower()
-        if url and url not in seen:
-            seen.add(url)
+        if url:
+            key = url
+        else:
+            key = (article["title"].strip().lower(), article["desc"].strip().lower())
+
+        if key not in seen:
+            seen.add(key)
             unique.append(article)
     return unique
