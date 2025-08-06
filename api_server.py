@@ -1,4 +1,3 @@
-# api_server.py
 import json
 import traceback
 from flask import Flask, request, jsonify
@@ -10,7 +9,9 @@ from analyzer import (
     estimate_legal_use,
     get_keyword_positions,
     fetch_articles,
-    get_best_sentence_indices  # ✅ make sure you import the plural one
+    get_best_sentence_indices,
+    deduplicate_articles,
+    final_article_pass
 )
 
 app = Flask(__name__)
@@ -28,7 +29,7 @@ def handle_script_analysis(script_text):
     # Simplify queries
     simplified = simplify_queries(parsed["queries"])
 
-    # Flatten any nested query lists to single strings
+    # Flatten queries
     flattened_queries = []
     for q in simplified:
         if isinstance(q, list):
@@ -37,34 +38,37 @@ def handle_script_analysis(script_text):
             flattened_queries.append(str(q))
     simplified = flattened_queries
 
-    # Split script into sentences for AI position matching
+    # Split script into sentences
     sentences = re.split(r'(?<=[.?!])\s+', script_text.strip())
 
     all_results = []
+
     for query in simplified:
         # Fetch articles
         articles = fetch_articles(query)
-        if not articles:
-            continue
+
+        # Deduplicate by title + url
+        articles = deduplicate_articles(articles)
 
         # Score relevance
         scores = batch_score_relevance(query, parsed["keywords"], articles)
 
-        # Filter relevant articles first
-        filtered_articles = []
-        for art, score in zip(articles, scores):
-            if score >= 80:
-                art["relevance_score"] = score
-                art["query"] = query
-                filtered_articles.append(art)
+        # Filter by score
+        filtered_articles = [
+            {**a, "relevance_score": s, "query": query}
+            for a, s in zip(articles, scores) if s >= 80
+        ]
 
         if not filtered_articles:
             continue
 
-        # Use AI to assign unique positions to each article
+        # Optional GPT pass to reorder + remove missed duplicates
+        filtered_articles = final_article_pass(query, filtered_articles)
+
+        # Assign sentence positions
         positions = get_best_sentence_indices(sentences, filtered_articles)
 
-        # Combine everything
+        # Final structuring
         for art, pos in zip(filtered_articles, positions):
             all_results.append({
                 "query": art["query"],
@@ -85,18 +89,18 @@ def handle_script_analysis(script_text):
             "results": []
         }
 
-    # Estimate legal use
+    # Legal use estimation
     legal_labels = estimate_legal_use(all_results)
     for art, label in zip(all_results, legal_labels):
         art["legal_use"] = label
 
-    # Sort results by script position and date
+    # Sort final results
     sorted_results = sorted(
         all_results,
         key=lambda x: (x["script_position"], x["date"] or "")
     )
 
-    # ✅ Assign unique sequential numbers to each article
+    # Add numbering
     for idx, art in enumerate(sorted_results, start=1):
         art["result_number"] = idx
 
@@ -122,10 +126,10 @@ def analyze_script_endpoint():
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
 
-# Optional: Keep your old endpoint if you want
 @app.route("/process_script", methods=["POST"])
 def process_script():
     return analyze_script_endpoint()
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=10000, debug=True)
+
