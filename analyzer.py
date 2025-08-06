@@ -252,6 +252,17 @@ def fetch_articles(query):
         except Exception as e:
             print(f"Error fetching from NewsAPI: {e}")
 
+    results = deduplicate_articles(results)
+
+    # ✅ SCORE AND FILTER BAD RESULTS
+    if results:
+        try:
+            simplified_keywords = [kw for group in simplify_queries([query]) for kw in group]
+            scores = batch_score_relevance(query, simplified_keywords, results)
+            results = [a for a, s in zip(results, scores) if s >= 80]
+        except Exception as e:
+            print(f"Error scoring/filtering relevance: {e}")
+
     return results
 
 def batch_score_relevance(query, keywords, articles):
