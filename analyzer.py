@@ -365,3 +365,13 @@ Articles:
         print("Error parsing JSON:", e)
         print("Raw response:", text_response)
         raise
+
+def deduplicate_articles(articles):
+    seen = set()
+    unique = []
+    for article in articles:
+        key = (article["title"].strip().lower(), article["desc"].strip().lower())
+        if key not in seen:
+            seen.add(key)
+            unique.append(article)
+    return unique
