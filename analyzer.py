@@ -261,10 +261,24 @@ def normalize_url(url):
 def deduplicate_articles(articles):
     seen = set()
     unique = []
+
     for article in articles:
-        norm_title = normalize_title(article.get("title", ""))
-        norm_url = normalize_url(article.get("url", ""))
-        key = (norm_title, norm_url)
+        url = (article.get("url") or "").strip().lower()
+        title = (article.get("title") or "").strip().lower()
+        desc = (article.get("desc") or "").strip().lower()
+
+        # Primary key: full info
+        if url and title:
+            key = ("url_title", url, title)
+        # Secondary key: title + desc
+        elif title and desc:
+            key = ("title_desc", title, desc)
+        # Fallback: just title
+        elif title:
+            key = ("title_only", title)
+        # Final fallback: hash of full content
+        else:
+            key = ("raw_hash", hash(json.dumps(article, sort_keys=True)))
 
         if key not in seen:
             seen.add(key)
