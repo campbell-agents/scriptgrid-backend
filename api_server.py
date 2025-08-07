@@ -6,7 +6,6 @@ from analyzer import (
     batch_score_relevance,
     estimate_legal_use,
     get_best_sentence_indices,
-    get_keyword_positions,
     final_article_pass,
 )
 
