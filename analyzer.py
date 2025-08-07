@@ -3,6 +3,7 @@ import re
 import json
 import requests
 from datetime import datetime, timedelta
+from urllib.parse import urlparse, urlunparse
 from openai import OpenAI
 
 client = OpenAI()
@@ -20,7 +21,7 @@ Read the script below and return a JSON object with:
 
 - "main_topics": A 3–5 sentence summary of the script’s main ideas.
 - "keywords": 5–10 of the most important names, places, and concepts.
-- "queries": 4-8 very specific search queries a journalist might use to investigate this **exact case**, not just the general topic.
+- "queries": 4–8 very specific search queries a journalist might use to investigate this **exact case**, not just the general topic.
 
 Avoid generic phrasing like "unidentified victims" or "forensic techniques". Be concrete.
 
@@ -39,7 +40,6 @@ Script:
         ],
         temperature=0
     )
-
     text = response.choices[0].message.content.strip()
     return json.loads(text)
 
@@ -47,17 +47,10 @@ def simplify_queries(queries):
     prompt = (
         "You are a query simplification assistant.\n\n"
         "For each question below, extract only the 2 or 3 most important keyword phrases.\n"
-        "Return ONLY strictly valid JSON with this format:\n\n"
-        "{\n"
-        '  "results": [\n'
-        '    ["keyword1 keyword2", "keyword1 keyword3"],\n'
-        '    ["keyword1 keyword2 keyword3"],\n'
-        '    ...\n'
-        "  ]\n"
-        "}\n\n"
-        "Questions:\n"
+        "Return ONLY strictly valid JSON with this format:\n"
+        '{ "results": [["keyword1 keyword2"], ["keyword3 keyword4"]]}'
+        "\nQuestions:\n"
     )
-
     for q in queries:
         prompt += f"- {q}\n"
 
@@ -69,9 +62,7 @@ def simplify_queries(queries):
         ],
         temperature=0
     )
-
-    text = response.choices[0].message.content.strip()
-    return json.loads(text)["results"]
+    return json.loads(response.choices[0].message.content.strip())["results"]
 
 def batch_score_relevance(query, keywords, articles):
     key_points = "\n".join(f"- {k}" for k in keywords)
@@ -84,7 +75,7 @@ For each article below, assign a numeric relevance score between 0 and 100:
 - 50: Related to the topic but does not cover any key points substantially.
 - 0: Unrelated to the topic.
 
-Be conservative with high scores: only assign 100 if the article clearly discusses the key points.
+Be conservative with high scores.
 
 Topic:
 "{query}"
@@ -97,8 +88,7 @@ Articles:
     for i, art in enumerate(articles):
         prompt += f"\n{i+1}. Title: {art['title']}\nDescription: {art['desc']}"
 
-    prompt += "\n\nReturn ONLY a JSON array of scores.\nExample:\n[100, 50, 0]"
-
+    prompt += "\n\nReturn ONLY a JSON array of scores."
     response = client.chat.completions.create(
         model=RELEVANCY_MODEL,
         messages=[
@@ -107,42 +97,21 @@ Articles:
         ],
         temperature=0
     )
-
-    text = response.choices[0].message.content.strip()
-    return json.loads(text)
+    return json.loads(response.choices[0].message.content.strip())
 
 def estimate_legal_use(articles):
-    prompt = """
-You are an AI that estimates the likely copyright or usage status of online articles for content creators.
-For each article, return a JSON object with:
-- "label": one of:
-  - "Public Domain"
-  - "Fair Use Likely"
-  - "License Likely Required"
-- "note": one short sentence explaining why.
-
-Return ONLY a JSON array of objects in this format:
-[
-  {"label": "...", "note": "..."},
-  {"label": "...", "note": "..."}
-]
-
-Articles:
-"""
+    prompt = "You are an AI that estimates usage rights.\nReturn ONLY a JSON array:\n"
     for i, art in enumerate(articles):
-        prompt += f"\n{i+1}. Title: {art['title']}\nURL: {art['url']}"
-
+        prompt += f"{i+1}. Title: {art['title']}\nURL: {art['url']}\n"
     response = client.chat.completions.create(
         model="gpt-4",
         messages=[
-            {"role": "system", "content": "You estimate likely legal use status and explain it concisely."},
+            {"role": "system", "content": "Estimate likely legal use."},
             {"role": "user", "content": prompt}
         ],
         temperature=0
     )
-
-    text = response.choices[0].message.content.strip()
-    return json.loads(text)
+    return json.loads(response.choices[0].message.content.strip())
 
 def fetch_articles(query):
     params = {
@@ -152,30 +121,25 @@ def fetch_articles(query):
         "num": ARTICLES_PER_QUERY,
         "api_key": SERPAPI_KEY
     }
-
     results = []
-
     try:
-        response = requests.get("https://serpapi.com/search.json", params=params)
-        data = response.json()
+        data = requests.get("https://serpapi.com/search.json", params=params).json()
+        for section in ["organic_results", "news_results", "top_stories"]:
+            if section in data:
+                for res in data[section]:
+                    results.append({
+                        "title": res.get("title", ""),
+                        "desc": res.get("snippet") or res.get("description") or "",
+                        "url": res.get("link") or res.get("url") or "",
+                        "date": res.get("date") or res.get("published") or ""
+                    })
     except Exception as e:
-        print(f"Error fetching from SerpAPI: {e}")
-        return []
-
-    for section in ["organic_results", "news_results", "top_stories"]:
-        if section in data:
-            for res in data[section]:
-                results.append({
-                    "title": res.get("title", ""),
-                    "desc": res.get("snippet") or res.get("description") or "",
-                    "url": res.get("link") or res.get("url") or "",
-                    "date": res.get("date") or res.get("published") or ""
-                })
+        print("Error fetching SerpAPI:", e)
 
     if not results and NEWSAPI_KEY:
         try:
             date_from = (datetime.now() - timedelta(days=NEWSAPI_DAYS_BACK)).strftime("%Y-%m-%d")
-            newsapi_response = requests.get(
+            news_data = requests.get(
                 "https://newsapi.org/v2/everything",
                 params={
                     "q": query,
@@ -185,152 +149,89 @@ def fetch_articles(query):
                     "sortBy": "relevancy",
                     "apiKey": NEWSAPI_KEY
                 }
-            )
-            data = newsapi_response.json()
-            if "articles" in data:
-                for article in data["articles"]:
-                    results.append({
-                        "title": article.get("title", ""),
-                        "desc": article.get("description") or "",
-                        "url": article.get("url") or "",
-                        "date": article.get("publishedAt") or ""
-                    })
+            ).json()
+            for article in news_data.get("articles", []):
+                results.append({
+                    "title": article.get("title", ""),
+                    "desc": article.get("description", ""),
+                    "url": article.get("url", ""),
+                    "date": article.get("publishedAt", "")
+                })
         except Exception as e:
-            print(f"Error fetching from NewsAPI: {e}")
+            print("Error fetching NewsAPI:", e)
 
-    return results
+    return deduplicate_articles(results)  # ✅ Early dedup here
 
 def get_best_sentence_indices(sentences, articles):
     prompt = f"""
-You are an AI assistant helping to align articles to a script.
-
-**Task**:
-- The script below is split into sentences.
-- For each article, assign a unique index number (starting at 1) indicating which sentence best matches the article’s topic and content.
-- Each article **must get a different index number**, no duplicates.
-- Return ONLY a JSON array of integers.
-
-**Script Sentences**:
+Script Sentences:
 {sentences}
-
-**Articles**:
-"""
-    for i, art in enumerate(articles):
-        prompt += f"\nArticle {i+1}:\nTitle: {art.get('title', '')}\nDescription: {art.get('desc', '')}"
-
-    prompt += "\nReturn ONLY the JSON array of integers, no explanations."
-
-    response = client.chat.completions.create(
-        model="gpt-4",
-        messages=[
-            {"role": "system", "content": "You assign unique sentence indices to articles."},
-            {"role": "user", "content": prompt}
-        ],
-        temperature=0
-    )
-
-    text = response.choices[0].message.content.strip()
-    return json.loads(text)
-
-def get_keyword_positions(script_text, keywords):
-    sentences = re.split(r'[.?!]\s+', script_text)
-    positions = {}
-    for keyword in keywords:
-        if not isinstance(keyword, str):
-            continue
-        for idx, sentence in enumerate(sentences):
-            if keyword.lower() in sentence.lower():
-                positions[keyword] = idx
-                break
-        else:
-            positions[keyword] = 999
-    return positions
-
-import re
-from urllib.parse import urlparse, urlunparse
-
-def normalize_title(title):
-    # Lowercase, remove punctuation, remove common fluff
-    return re.sub(r'\W+', '', title.lower().strip())
-
-def normalize_url(url):
-    parsed = urlparse(url)
-    # Remove query and fragment
-    return urlunparse((parsed.scheme, parsed.netloc, parsed.path, '', '', ''))
-
-def deduplicate_articles(articles):
-    seen = set()
-    unique = []
-
-    for article in articles:
-        url = (article.get("url") or "").strip().lower()
-        title = (article.get("title") or "").strip().lower()
-        desc = (article.get("desc") or "").strip().lower()
-
-        # Primary key: full info
-        if url and title:
-            key = ("url_title", url, title)
-        # Secondary key: title + desc
-        elif title and desc:
-            key = ("title_desc", title, desc)
-        # Fallback: just title
-        elif title:
-            key = ("title_only", title)
-        # Final fallback: hash of full content
-        else:
-            key = ("raw_hash", hash(json.dumps(article, sort_keys=True)))
-
-        if key not in seen:
-            seen.add(key)
-            unique.append(article)
-
-    return unique
-
-def final_article_pass(query, articles):
-    """
-    Last-chance cleanup: remove remaining dupes, sort best-to-worst by how well they match the query.
-    """
-    prompt = f"""
-You are an AI assistant cleaning up a list of articles for a research query.
-
-TASK:
-1. Remove any duplicate or nearly duplicate articles (even if slightly reworded).
-2. Reorder them so that the most relevant ones are listed first.
-
-Query:
-"{query}"
 
 Articles:
 """
     for i, art in enumerate(articles):
-        prompt += f"\n{i+1}. Title: {art['title']}\nDescription: {art['desc']}\nURL: {art['url']}"
-
-    prompt += """
-Return ONLY the cleaned and reordered list in this strict JSON format:
-[
-  {"title": "...", "desc": "...", "url": "..."},
-  ...
-]
-"""
+        prompt += f"{i+1}. {art['title']} - {art['desc']}\n"
+    prompt += "Return a JSON array of unique index numbers for each article."
 
     response = client.chat.completions.create(
         model="gpt-4",
         messages=[
-            {"role": "system", "content": "You remove redundant articles and order them by relevance."},
+            {"role": "system", "content": "Assign sentence indices."},
+            {"role": "user", "content": prompt}
+        ],
+        temperature=0
+    )
+    return json.loads(response.choices[0].message.content.strip())
+
+def deduplicate_articles(articles):
+    seen = set()
+    unique = []
+    for article in articles:
+        url = normalize_url(article.get("url", ""))
+        title = normalize_title(article.get("title", ""))
+        desc = normalize_title(article.get("desc", ""))
+
+        if url and title:
+            key = ("url+title", url, title)
+        elif title and desc:
+            key = ("title+desc", title, desc)
+        else:
+            key = ("fallback", title or desc)
+
+        if key not in seen:
+            seen.add(key)
+            unique.append(article)
+    return unique
+
+def final_article_pass(query, articles):
+    prompt = f"""
+Query: "{query}"
+Remove duplicates. Reorder by relevance.
+
+Articles:
+"""
+    for a in articles:
+        prompt += f"- {a['title']} — {a['desc']} — {a['url']}\n"
+
+    prompt += "Return strict JSON list of articles (title, desc, url)."
+
+    response = client.chat.completions.create(
+        model="gpt-4",
+        messages=[
+            {"role": "system", "content": "You clean and reorder articles."},
             {"role": "user", "content": prompt}
         ],
         temperature=0
     )
 
-    text = response.choices[0].message.content.strip()
-    parsed = json.loads(text)
+    cleaned = json.loads(response.choices[0].message.content.strip())
+    lookup = {normalize_url(a["url"]): a for a in articles}
+    return [lookup.get(normalize_url(x["url"])) for x in cleaned if normalize_url(x["url"]) in lookup]
 
-    # Re-merge metadata into the cleaned list
-    url_map = {a["url"]: a for a in articles}
-    enriched = []
-    for item in parsed:
-        full = url_map.get(item["url"])
-        if full:
-            enriched.append(full)
-    return enriched
+def normalize_url(url):
+    parsed = urlparse(url)
+    return urlunparse((parsed.scheme, parsed.netloc, parsed.path, '', '', ''))
+
+def normalize_title(title):
+    return re.sub(r'\W+', '', title.lower().strip())
 
