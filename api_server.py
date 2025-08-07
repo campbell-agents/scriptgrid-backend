@@ -1,80 +1,67 @@
 from flask import Flask, request, jsonify
+from flask_cors import CORS
 from analyzer import (
     analyze_script,
     simplify_queries,
     fetch_articles,
+    deduplicate_articles,
     batch_score_relevance,
     estimate_legal_use,
-    get_best_sentence_indices,
-    final_article_pass,
+    final_article_pass
 )
 
 app = Flask(__name__)
+CORS(app)
 
-@app.route("/analyze", methods=["POST"])
-def analyze():
+@app.route("/analyze_script", methods=["POST", "OPTIONS"])
+def analyze_script_endpoint():
+    if request.method == "OPTIONS":
+        return jsonify({"status": "ok"}), 200
+
     data = request.get_json()
-    script_text = data.get("script", "").strip()
+    script = data.get("script", "")
+    if not script:
+        return jsonify({"error": "No script provided"}), 400
 
-    if not script_text:
-        return jsonify({"error": "Missing 'script' field"}), 400
+    analysis = analyze_script(script)
+    queries = analysis["queries"]
+    keywords = analysis["keywords"]
+    main_topics = analysis["main_topics"]
 
-    try:
-        # STEP 1 — Analyze script
-        analysis = analyze_script(script_text)
-        queries = analysis["queries"]
-        keywords = analysis["keywords"]
-        main_topics = analysis["main_topics"]
+    simplified_query_sets = simplify_queries(queries)
 
-        # STEP 2 — Simplify queries
-        simplified_queries = simplify_queries(queries)
+    all_articles = []
+    for simplified_keywords in simplified_query_sets:
+        for keyword_string in simplified_keywords:
+            articles = fetch_articles(keyword_string)
+            all_articles.extend(articles)
 
-        all_articles = []
+    deduped_articles = deduplicate_articles(all_articles)
 
-        # STEP 3 — Fetch and deduplicate per query
-        for query_variants in simplified_queries:
-            for query in query_variants:
-                fetched = fetch_articles(query)
-                if fetched:
-                    scored = batch_score_relevance(query, keywords, fetched)
-                    for i, score in enumerate(scored):
-                        fetched[i]["relevance_score"] = score
-                        fetched[i]["query"] = query
-                    all_articles.extend(fetched)
+    relevance_scores = batch_score_relevance(queries[0], keywords, deduped_articles)
+    for article, score in zip(deduped_articles, relevance_scores):
+        article["relevance"] = score
 
-        if not all_articles:
-            return jsonify({"error": "No relevant articles found"}), 404
+    sorted_articles = sorted(deduped_articles, key=lambda x: x["relevance"], reverse=True)[:20]
 
-        # STEP 4 — Final deduplication + sorting
-        all_articles = final_article_pass(" | ".join(queries), all_articles)
+    legal_labels = estimate_legal_use(sorted_articles)
+    for article, label in zip(sorted_articles, legal_labels):
+        article["source_type"] = f"{label['label']} — {label['note']}"
 
-        # STEP 5 — Estimate usage rights
-        legal_info = estimate_legal_use(all_articles)
-        for article, rights in zip(all_articles, legal_info):
-            article["source_type"] = rights["label"]
-            article["use_note"] = rights["note"]
+    cleaned = final_article_pass(queries[0], sorted_articles)
 
-        # STEP 6 — Add additional metadata
-        keyword_positions = get_keyword_positions(script_text, keywords)
-        for article in all_articles:
-            article["query"] = article.get("query", "")
-            article["relevance"] = article.get("relevance_score", 0)
+    return jsonify({
+        "keywords": keywords,
+        "main_topics": main_topics,
+        "queries": queries,
+        "results": cleaned
+    })
 
-        # STEP 7 — Sentence mapping
-        sentences = script_text.split(". ")
-        best_indices = get_best_sentence_indices(sentences, all_articles)
-        for article, idx in zip(all_articles, best_indices):
-            article["script_sentence_index"] = idx
-
-        return jsonify({
-            "main_topics": main_topics,
-            "keywords": keywords,
-            "queries": queries,
-            "results": all_articles
-        })
-
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+@app.route("/process_script", methods=["POST", "OPTIONS"])
+def process_script():
+    if request.method == "OPTIONS":
+        return jsonify({"status": "ok"}), 200
+    return analyze_script_endpoint()
 
 if __name__ == "__main__":
     import os
