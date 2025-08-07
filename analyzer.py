@@ -246,14 +246,30 @@ def get_keyword_positions(script_text, keywords):
             positions[keyword] = 999
     return positions
 
+import re
+from urllib.parse import urlparse, urlunparse
+
+def normalize_title(title):
+    # Lowercase, remove punctuation, remove common fluff
+    return re.sub(r'\W+', '', title.lower().strip())
+
+def normalize_url(url):
+    parsed = urlparse(url)
+    # Remove query and fragment
+    return urlunparse((parsed.scheme, parsed.netloc, parsed.path, '', '', ''))
+
 def deduplicate_articles(articles):
     seen = set()
     unique = []
     for article in articles:
-        key = (article.get("title", "").strip().lower(), article.get("url", "").strip().lower())
+        norm_title = normalize_title(article.get("title", ""))
+        norm_url = normalize_url(article.get("url", ""))
+        key = (norm_title, norm_url)
+
         if key not in seen:
             seen.add(key)
             unique.append(article)
+
     return unique
 
 def final_article_pass(query, articles):
